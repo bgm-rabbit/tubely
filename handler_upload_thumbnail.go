@@ -1,9 +1,11 @@
 package main
 
 import (
-	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
 	"github.com/google/uuid"
@@ -48,13 +50,6 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 	// Get the media type from the Content-Type header
 	mediaType := fileHeader.Header.Get("Content-Type")
 
-	// Read all the image data into a byte slice
-	imageData, err := io.ReadAll(file)
-	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Couldn't read file", err)
-		return
-	}
-
 	// Get the video's metadata from the database
 	video, err := cfg.db.GetVideo(videoID)
 	if err != nil {
@@ -68,14 +63,30 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Save the thumbnail to the global map
-	videoThumbnails[videoID] = thumbnail{
-		data:      imageData,
-		mediaType: mediaType,
+	// Determine file extension from Content-Type
+	ext := getFileExtension(mediaType)
+
+	// Create file path
+	fileName := videoID.String() + ext
+	filePath := filepath.Join(cfg.assetsRoot, fileName)
+
+	// Create the file on disk
+	newFile, err := os.Create(filePath)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't create file", err)
+		return
+	}
+	defer newFile.Close()
+
+	// Copy the file contents
+	_, err = io.Copy(newFile, file)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't copy file", err)
+		return
 	}
 
-	// Update the video metadata with the thumbnail URL
-	thumbnailURL := fmt.Sprintf("http://localhost:%s/api/thumbnails/%s", cfg.port, videoID)
+	// Update the thumbnail URL
+	thumbnailURL := "/assets/" + fileName
 	video.ThumbnailURL = &thumbnailURL
 
 	// Update the video in the database
@@ -87,4 +98,26 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 
 	// Respond with the updated video JSON
 	respondWithJSON(w, http.StatusOK, video)
+}
+
+func getFileExtension(mediaType string) string {
+	switch mediaType {
+	case "image/jpeg":
+		return ".jpg"
+	case "image/png":
+		return ".png"
+	case "image/gif":
+		return ".gif"
+	case "image/webp":
+		return ".webp"
+	case "image/svg+xml":
+		return ".svg"
+	default:
+		// Try to extract from the media type if it has a subtype
+		parts := strings.Split(mediaType, "/")
+		if len(parts) > 1 {
+			return "." + parts[1]
+		}
+		return ".bin"
+	}
 }
