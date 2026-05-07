@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"mime"
 	"net/http"
 	"os"
@@ -102,8 +103,28 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Generate a unique S3 key for the video
-	key := fmt.Sprintf("videos/%s.mp4", videoID.String())
+	// Get the video aspect ratio
+	aspectRatio, err := getVideoAspectRatio(tempFile.Name())
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't determine video aspect ratio", err)
+		return
+	}
+
+	// Determine the prefix based on aspect ratio
+	var prefix string
+	switch aspectRatio {
+	case "16:9":
+		prefix = "landscape"
+	case "9:16":
+		prefix = "portrait"
+	default:
+		prefix = "other"
+	}
+
+	log.Printf("Video %s detected as %s aspect ratio, using prefix: %s", videoID.String(), aspectRatio, prefix)
+
+	// Generate a unique S3 key for the video with aspect ratio prefix
+	key := fmt.Sprintf("videos/%s/%s.mp4", prefix, videoID.String())
 
 	// Upload to S3
 	_, err = cfg.s3Client.PutObject(context.Background(), &s3.PutObjectInput{
