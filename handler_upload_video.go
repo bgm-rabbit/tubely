@@ -151,8 +151,8 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Update the video URL with S3 bucket and key as comma-delimited string
-	videoURL := fmt.Sprintf("%s,%s", cfg.s3Bucket, key)
+	// Update the video URL with CloudFront distribution URL
+	videoURL := fmt.Sprintf("https://%s/%s", cfg.s3CfDistribution, key)
 	video.VideoURL = &videoURL
 
 	// Update the video in the database
@@ -162,13 +162,6 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Convert to signed video before responding
-	signedVideo, err := cfg.dbVideoToSignedVideo(video)
-	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Couldn't generate presigned URL", err)
-		return
-	}
-
 	// Respond with the updated video JSON
-	respondWithJSON(w, http.StatusOK, signedVideo)
+	respondWithJSON(w, http.StatusOK, video)
 }
