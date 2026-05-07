@@ -87,7 +87,8 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		respondWithError(w, http.StatusInternalServerError, "Couldn't create temp file", err)
 		return
 	}
-	defer os.Remove(tempFile.Name())
+	tempFilePath := tempFile.Name()
+	defer os.Remove(tempFilePath)
 
 	// Copy the uploaded file contents to the temp file
 	_, err = io.Copy(tempFile, file)
@@ -96,15 +97,11 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Reset file pointer to the beginning for S3 upload
-	_, err = tempFile.Seek(0, io.SeekStart)
-	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Couldn't reset file pointer", err)
-		return
-	}
+	// Close the temp file so ffmpeg can read it
+	tempFile.Close()
 
 	// Get the video aspect ratio
-	aspectRatio, err := getVideoAspectRatio(tempFile.Name())
+	aspectRatio, err := getVideoAspectRatio(tempFilePath)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Couldn't determine video aspect ratio", err)
 		return
@@ -123,6 +120,22 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 
 	log.Printf("Video %s detected as %s aspect ratio, using prefix: %s", videoID.String(), aspectRatio, prefix)
 
+	// Process video for fast start encoding
+	processedFilePath, err := processVideoForFastStart(tempFilePath)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't process video for fast start", err)
+		return
+	}
+	defer os.Remove(processedFilePath)
+
+	// Open the processed video file for upload
+	processedFile, err := os.Open(processedFilePath)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't open processed video file", err)
+		return
+	}
+	defer processedFile.Close()
+
 	// Generate a unique S3 key for the video with aspect ratio prefix
 	key := fmt.Sprintf("videos/%s/%s.mp4", prefix, videoID.String())
 
@@ -130,7 +143,7 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	_, err = cfg.s3Client.PutObject(context.Background(), &s3.PutObjectInput{
 		Bucket:      aws.String(cfg.s3Bucket),
 		Key:         aws.String(key),
-		Body:        tempFile,
+		Body:        processedFile,
 		ContentType: aws.String(mediaType),
 	})
 	if err != nil {
